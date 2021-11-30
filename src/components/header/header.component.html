@@ -1,0 +1,3 @@
+<mat-toolbar [style.height]="height" color="primary">
+    <button style="margin:5px" mat-button *ngFor="let button of header_buttons" (click)="button.fn()">{{button.text}}</button>
+</mat-toolbar>
