@@ -7,13 +7,11 @@ license = ""
 repository = ""
 default-run = "localbooru"
 edition = "2018"
-build = "src/build.rs"
 
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-
 image = "^0.23.14"
 img_hash = "^3.2.0"
 tokio = {version="^1.12.0", features= ["fs"] }
@@ -22,7 +20,7 @@ walkdir = "^2.3.2"
 async-channel = "^1.6.1"
 futures = "0.3.17"
 rust-crypto = "^0.2.36"
-
+sqlx = { version = "0.5", features = [ "runtime-tokio-rustls", "sqlite" ] }
 
 [profile.dev]
 opt-level=3
