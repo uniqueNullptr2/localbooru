@@ -304,6 +304,7 @@ dependencies = [
  "image",
  "img_hash",
  "num_cpus",
+ "rayon",
  "rust-crypto",
  "serde",
  "walkdir",

@@ -19,6 +19,7 @@ walkdir = "^2.3.2"
 rust-crypto = "^0.2.36"
 num_cpus = "1.13.1"
 crossbeam-channel = "0.5.4"
+rayon = "1.5.1"
 
 [profile.dev]
 opt-level=3

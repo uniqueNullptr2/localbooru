@@ -1,51 +1,32 @@
-use std::{path::Path, thread::spawn};
+use std::{path::Path};
 
 use anyhow::Result;
-use crossbeam_channel::{Receiver, Sender};
 use image_utils::{Image, ImageSearchCache};
 use walkdir::{DirEntry, WalkDir};
-
+use rayon::prelude::*;
 mod image_utils;
 
 fn search<T: AsRef<Path>>(path: T) -> Result<ImageSearchCache> {
-    let (s, r): (Sender<DirEntry>, Receiver<DirEntry>) = crossbeam_channel::bounded(200);
-    let cpus = num_cpus::get();
-    let mut v = vec![];
     let mut cache = ImageSearchCache::new();
 
-    for _ in 0..cpus {
-        let recv = r.clone();
-        v.push(spawn(move || {
-            let mut v: Vec<Image> = vec![];
-            loop {
-                match recv.recv() {
-                    Ok(entry) if is_image(&entry) => v.push(Image::from_file(entry.path())?),
-                    Err(_) => break,
-                    _ => (),
-                }
-            }
-            Ok(v)
-        }));
-    }
-    for entry in WalkDir::new(path.as_ref()) {
-        let e = entry?;
-        if e.file_type().is_file() {
-            s.send(e)?;
-        }
-    }
-    drop(s);
-    let v: Result<Vec<Vec<Image>>> = v.into_iter().map(|h| h.join()).flatten().collect();
-    for img in v?.into_iter().flatten() {
+
+    let paths: Vec<DirEntry> = WalkDir::new(path.as_ref())
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.file_type().is_file() && is_image(e))
+                    .collect();
+    let v:Result<Vec<Image>> = paths.par_iter().map(|e| Image::from_file(e.path())).collect();
+    for img in v? {
         cache.insert(img);
     }
     Ok(cache)
 }
 
 fn main() -> Result<()> {
-    // let cache = search("/home/phil/Bilder/Ballou2")?;
-    let cache = ImageSearchCache::init("/home/phil/Bilder/search.db")?;
+    let cache = search("/home/phil/Bilder/Ballou2")?;
+    // let cache = ImageSearchCache::init("/home/phil/Bilder/search.db")?;
     println!("{}", cache.len());
-    // cache.write_to_file("/home/phil/Bilder/search.db")?;
+    cache.write_to_file("/home/phil/Bilder/search.db")?;
     Ok(())
 }
 
