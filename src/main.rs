@@ -1,70 +1,56 @@
+use std::path::Path;
+use std::thread::spawn;
+
 use anyhow::Result;
-use async_channel::Receiver;
-use futures::future::join_all;
-use models::SearchResult;
-use sqlx::{ Pool, Sqlite, sqlite::SqlitePoolOptions};
-use anyhow::Error;
-use tokio::fs::OpenOptions;
+use crossbeam_channel::Receiver;
+use crossbeam_channel::Sender;
+use image_utils::Image;
+use image_utils::ImageSearchCache;
 use walkdir::{DirEntry, WalkDir};
 
-mod db;
-mod models;
+mod image_utils;
 
 
-async fn get_search_results(pool: Pool<Sqlite>) -> Result<Vec<SearchResult>, String>{
-    println!("command executed yo");
-    let r = SearchResult::get_by_search(&pool, 0).await.map_err(|_| "Failed to get Results".to_owned())?;
-    println!("{}", r.len());
-    Ok(r)
-}
-
-
-async fn search(pool: Pool<Sqlite>, path: String) -> Result<(), String>{
-    let (s, r) = async_channel::unbounded();
+fn search<T: AsRef<Path>>(path: T) -> Result<ImageSearchCache>{
+    let (s, r): (Sender<DirEntry>,Receiver<DirEntry>) = crossbeam_channel::bounded(200);
+    let cpus = num_cpus::get();
     let mut v = vec!();
-    for _ in 0..8 {
-        let r2 = r.clone();
-        let p2 = pool.clone();
-        v.push(tokio::spawn(async move {
+    let mut cache = ImageSearchCache::new();
+
+    for _ in 0..cpus {
+        let recv = r.clone();
+        v.push(spawn(move ||{
+            let mut v: Vec<Image> = vec!();
             loop {
-                if r2.is_closed() && r2.is_empty() {
-                    break;
-                }
-                match handle_image(&r2, &p2).await {
-                    Err(err) => println!("ERROR YO:  {}", err),
+                match recv.recv() {
+                    Ok(entry) if is_image(&entry)=> v.push(Image::from_file(entry.path())?),
+                    Err(_) => break,
                     _ => ()
                 }
             }
+            Ok(v)
         }));
     }
-    for entry in WalkDir::new(path){
-        let e = entry.map_err(|_| "dir error".to_owned())?;
+    for entry in WalkDir::new(path.as_ref()){
+        let e = entry?;
         if e.file_type().is_file() {
-            s.send(e).await.map_err(|_| "send error".to_owned())?;
+            s.send(e)?;
         }
     }
-    s.close();
-    join_all(v).await;
-    Ok(())
+    drop(s);
+    let v: Result<Vec<Vec<Image>>> = v.into_iter().map(|h| h.join()).flatten().collect();
+    for img in v?.into_iter().flatten() {
+        cache.insert(img);
+    }
+    Ok(cache)
 }
 
-fn main() {
-    // tauri::Builder::default()
-    //     .setup(|app| {
-    //         let mut path = tauri::api::path::home_dir().expect("dirs");
-    //         path = path.join(".localbooru");
-    //         tauri::async_runtime::block_on(tokio::fs::create_dir_all(&path)).expect("create dirs");
-    //         path = path.join("localbooru.db");
-    //         tauri::async_runtime::block_on(OpenOptions::new().create(true).write(true).open(&path)).expect("database path");
-    //         let pool = tauri::async_runtime::block_on(SqlitePoolOptions::new().connect(path.to_str().expect("tgus is bs"))).expect("Sqlite");
-    //         tauri::async_runtime::block_on(db::make_tables(&pool)).expect("failed to make tables");
-    //         app.manage(pool);
-    //         Ok(())
-    //     })
-    //     .invoke_handler(tauri::generate_handler![get_search_results, search])
-    //     .run(tauri::generate_context!())
-    //     .expect("error while running tauri application");
-    println!("Hello There!")
+fn main() -> Result<()> {
+    // let cache = search("/home/phil/Bilder/Ballou2")?;
+    let cache = ImageSearchCache::init("/home/phil/Bilder/search.db")?;
+    println!("{}", cache.len());
+    // cache.write_to_file("/home/phil/Bilder/search.db")?;
+    Ok(())
 }
 
 fn is_image(e: &DirEntry) -> bool{
@@ -73,17 +59,4 @@ fn is_image(e: &DirEntry) -> bool{
     let name = l_name.to_string_lossy();
     println!("{}", name);
     name.ends_with(".png") || name.ends_with(".jpg") ||name.ends_with(".jpeg")
-}
-
-async fn handle_image (r: &Receiver<DirEntry>, pool: &Pool<Sqlite>) -> Result<(), Error> {
-    let e = r.recv().await?;
-    let mut sr = SearchResult::new(e.path());
-
-    if is_image(&e) {
-        sr.calculate_hash().await?;
-        sr.set_is_image(true);
-    }
-
-    sr.insert(pool).await.expect("insert err");
-    Ok(())
 }
